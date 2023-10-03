@@ -1,0 +1,33 @@
+Так скажем минимальный пакет для адекватной работы
+0.Компилятор Go, без него не будет работать(, т.к. все написано на Go. 
+wget https://go.dev/dl/go1.21.1.linux-amd64.tar.gz 
+tar -xvf go1.21.1.linux-amd64.tar.gz
+sudo mv go /usr/local/
+export PATH=$PATH:/usr/local/go/bin
+1.Prometheus wget с оф сайта, потом 
+tar -xvf 
+prometheus --config.file=prometheus.yml
+2.Grafana 
+sudo apt-get install grafana / либо можно скачать deb пакет 
+systemctl start grafana-server
+3.NodeExporter - экспортер для снятия метрик с линукс машины 
+wget https://github.com/prometheus/node_exporter/releases/download/v1.6.1/node_exporter-1.6.1.linux-amd64.tar.gz
+
+
+Дальше нужно добавить минимальные настройки в prometheus.yml 
+Выставить scrape_interval
+        Выставить scrape_configs
+    scrape_configs:
+  # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+  - job_name: "prometheus"
+
+    # metrics_path defaults to '/metrics'
+    # scheme defaults to 'http'.
+
+    static_configs:
+      - targets: ["localhost:9090"]
+
+
+  - job_name: "node_exporter"
+    static_configs:
+      - targets: ["localhost:9100"]

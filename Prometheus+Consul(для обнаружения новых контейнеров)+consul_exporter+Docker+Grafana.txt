@@ -1,0 +1,1 @@
+Prometheus+Consul(для обнаружения новых контейнеров)+consul_exporter+Docker+Grafana
