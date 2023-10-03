@@ -1,0 +1,228 @@
+Деплой Prometheus+Grafana+some exporters
+
+В чем же суть?
+
+Задумка не хитрая, как уже говорилось, прометеус -бд временных рядов,которая сама пуллит метрики с указанных хостов.
+Чтобы забрать метрики, нужно чтобы кто то их отдал и самое популярное решениедля этого вопроса - экспортеры, 
+которых имеется великое множество.
+Архитектура заключается в том, что экспортер устанавливается на целевую машину и занимает какой то свой дефолтный
+порт, хост и порт этой конечки мы прописываем в конфиг файле прометеуса, метрики экспортеh кладет по пути host:port/metrics.
+
+Получается что имея какую то систему, приложуху, бд, к ней на хост мы устанавливаем нужный нам экспортер, который будет собирать различные метрики,
+в конфиге мы указываем адрес и порт этого экспортера и данные текут в преметеус, а уже оттуда графана их достает и визуализирует, 
+в графане мы просто добавляем датасурс с прометеус сервером.
+Под каждый экспортер есть уже готовые дашборды коммьюнити, которые весьма симпотные и юзабельные, 
+но также мы можем составить и свой дашборд из нужных нам графиков, которые 
+будут выстравиваться исходя из запроса promQL.
+
+
+КАРТИНКА
+
+И так, вот наша простейшая архитектура.У нас есть 3 хоста с линуксом, на одном из них находится база PostreSQL,а на другом у нас висит докер.
+На все хосты нам нужно установить node_exporter, чтобы собирать системные(железные) метрики.Дополнительно на сервер с БД нам нужен 
+postgres_exporter, а на сервер с Docker- docker_exporter.Как настраивать мониторинг с обнуружением отдельных контейнеров разберем позже.
+
+Начнем: 
+1.Установка Prometheus Server
+Все компоненты Prometheus’а написаны на Go и представляют собой статически скомпиленные бинари, не требующие никаких зависимостей,
+кроме libc и готовые запускаться на любой платформе, будь то Debian, Arch или Centos. Установить их можно аж тремя способами:
+1.по-старинке через пакетный менеджер,
+2.взять готовые бинарники с оф. сайта и засунуть их в систему в обход пакетного менеджера,
+3.развернуть всё в докер-контейнерах.
+При установке вручную Prometheus не будет числиться в списках установленного софта и с точки зрения пакетного менеджера его в системе нет. 
+Зато вы сможете обновлять Prometheus отдельно от пакетов. 
+При ручной установке придётся немного побывать в роли установочного скрипта (который есть в пакете), 
+поэтому, если у вас серьёзные намерения — автоматизируйте установку/обновление через какой-нибудь Ansible.
+Плейбук для установки напишем позже самостоятельно
+Рекомендую взять за основу готовые роли для Prometheus, Alertmanager, Node exporter, Grafana.
+
+Если ставить Prometheus в докере, то всё про мониторинг будет лежать в одном месте. Можно это хозяйство положить под Git и 
+иметь возможность поднять мониторинг в две команды: git clone, docker-compose up. 
+Но надо писать правильный docker-compose.yml, париться при возникновении сетевых проблем… 
+Короче, вы от одних проблем избавляетесь, а взамен получаете другие. В зависимости от того, с какими вам больше нравится возиться, 
+выбирайте тот или иной вариант установки. Вам понадобятся контейнеры prom/prometheus, prom/node_exporter, prom/alertmanager. 
+За основу рекомендую взять docker-compose.yml из репозитория docprom.
+
+Рассмотрим самый надженый вариант - в ручную!
+1.Выбираем свежую версию https://github.com/prometheus/prometheus/releases, вгетаем 
+2.Распакуем tar -xvf 
+3.Так как это не какой нибудь удобный деб пакет, то нужно ручками раскидать файлы по директориям, создать пользователя и добавить initd юнит
+# cd prometheus-*
+# cp prometheus promtool /usr/local/bin  --закидываем бинарники в /usr/local/bin
+# mkdir /etc/prometheus /var/lib/prometheus --создаем директории под прометей
+# cp prometheus.yml /etc/prometheus --перекидываем конфиг файл в созданную /etc/prometheus/
+# useradd --no-create-home --home-dir / --shell /bin/false prometheus --создаем пользователя 
+# chown -R prometheus:prometheus /var/lib/prometheus отдаем права ему 
+
+5.Создаем initd юнит в котором мы можем указать нужные нам параметры запуска сервиса и обязательно прописываем путь к конфигу
+/etc/systemd/system/prometheus.service - создаем этот файл и в него прописываем 
+
+[Unit]
+Description=Prometheus
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=prometheus
+Group=prometheus
+Restart=on-failure
+ExecStart=/usr/local/bin/prometheus \
+  --config.file /etc/prometheus/prometheus.yml \
+  --storage.tsdb.path /var/lib/prometheus/
+ExecReload=/bin/kill -HUP $MAINPID
+ProtectHome=true
+ProtectSystem=full
+
+[Install]
+WantedBy=default.target
+
+6.После этого мы уже можем пользоваться нашим сервисом
+systemctl daemon reload
+systemctl status prometheus
+systemctl start prometheus 
+systemctl enable prometheus 
+7.После этого прометеус должен встать, проверим его веб интерфейс http://host:9090
+
+
+2.Установка node_exporter
+Конечно же мы захотим следить за доступностью наших серверов + за метриками линукса, под эти цели существует node_exporter 
+1.Вгетаем подходящую версию https://github.com/prometheus/node_exporter/releases
+2.Распаковываем tar -xvf 
+3.Воспользуемся ДЕФОЛТ ИНСТРУКЦИЯ ДЕПЛОЯ ЭКСПОРТЕРА
+	1.Логика весьма простая- бинарник в /usr/local/bin
+	2.Создаем юнит initd чтобы у нас был сервис с этим экспортером 
+    В случае с node_exporter
+        [Unit]
+        Description=Prometheus Node Exporter
+        After=network.target
+
+        [Service]
+        Type=simple
+        User=node_exporter
+        Group=node_exporter
+        ExecStart=/usr/local/bin/node_exporter
+
+        SyslogIdentifier=node_exporter
+        Restart=always
+
+        PrivateTmp=yes
+        ProtectHome=yes
+        NoNewPrivileges=yes
+
+        ProtectSystem=strict
+        ProtectControlGroups=true
+        ProtectKernelModules=true
+        ProtectKernelTunables=yes
+
+        [Install]
+        WantedBy=multi-user.target
+	3.нетстатом проверяем на каком порту он висит и добавляем его в конфиг прометеуса, и с ходу ищем готовый дашборд в графане под него.
+    В конфиге мы можем прописывать labels(ярлыки) под эту джобу.
+	
+Траблшутинг:1.Если что то не заработало сразу, проверяем статус сервиса, нетстатом порт, переходим в веб интерфейс экспортера 
+потом уходим на /metrics.Если на стороне экспортера все ок, то значит смотрим конфиг, может накосячили в ямлике.
+
+Установка PostresQL + postrgres_exporter
+Какой бы простой не казалось установка постгреса, не забываем что для элементарной работы + обеспечения элементарного секурити нам нужно 
+1.Создать отдельного пользователя и дать ему нужные привелегии GRANT ALL PRIVELEGES
+2.Сделать изменения в двух конфиг файлах, в основном - добавить добавить чтобы psql server принимал запросы со всех хостов, 
+а не только с локалхоста, ставим звездочку в нужном параметре, который мы раскомментим.
+Подозреваю что там можно указать и диапазон адресов или же несколько статик адресов С ЭТОГО МОМЕНТА СУБД ПРИНИМАЕТ ЗАПРОСЫ СО ВСЕХ ХОСТОВ
+Сделав это, переходим в другой конфиг файл, где мы уже прописываем к нужному нам хосту нужного пользователя для подключения, 
+но обычно мы просто указываем также(создаем правило)суть которого в разрешении подключаться со всех хостов под любыми 
+пользователями(лиж бы пароль был верный).
+Сделав это, рестартаем сервис с БД.
+
+Траблшутинг:делаем нетстат, если порт бд не слушает, то что то не так в конфиге и она просто не запустилась.
+Если слушает но не дает, то также смотрим конфиг.
+
+После того как БД встала и мы можем к ней подключиться(проверьте подключение и на локалхост и с другой тачки), мы можем смело накатывать экспортер.
+Экспортер устанавливаем по дефолтной инструкции ничего хитрого, в гитхабе только нужно найти не контейнер, а бинарник в гите в /releases 
+1.Вгетаем https://github.com/prometheus-community/postgres_exporter/releases/
+2.Распаковываем 
+3.Скопируйте содержимое распакованного архива в папку /usr/local/bin
+5.Измените владельца postgres_exporter на postgres:
+chown -R postgres:postgres /usr/local/bin/postgres_exporter
+6.Создайте сценарий запуска systemd сервиса postgres_exporter. 
+Для этого создайте файл /etc/systemd/system/postgres_exporter.service со следующим содержимым:
+
+[Unit]
+Description=Prometheus PostgreSQL Exporter
+After=network.target
+
+[Service]
+Type=simple
+Restart=always
+User=postgres
+Group=postgres
+Environment=DATA_SOURCE_NAME="user=postgres host=/var/run/postgresql/ sslmode=disable"
+ExecStart=/usr/local/bin/postgres_exporter
+[Install]
+WantedBy=multi-user.target
+
+Дальше также втыкаем готовый дашборд коммьюнити и наслаждаемся графиками, также для наглядности работы можем сделать небольшой 
+втроенный в PG стресс тест 
+
+Установка Grafana
+Тут все просто  
+1.Вгетаем deb пакет 
+2.dpkg -i grafana_6.3.2_amd64.deb
+3.systemctl status grafana
+4.systemctl start grafana 
+
+
+/////////////////////ДОПИСАТЬ ПРО ДОКЕР//////////////////
+
+
+Когда все компоненты установлены, надо их подружить друг с другом.
+
+Для этого мы просто берем и вписываем адреса с портами в конфиг файл прометеуса.Выглядит это все так 
+global:
+  scrape_interval: 15s # Set the scrape interval to every 15 seconds. Default is every 1 minute.
+  evaluation_interval: 15s # Evaluate rules every 15 seconds. The default is every 1 minute.
+  # scrape_timeout is set to the global default (10s).
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093
+
+# Load rules once and periodically evaluate them according to the global 'evaluation_interval'.
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+# A scrape configuration containing exactly one endpoint to scrape:
+# Here it's Prometheus itself.
+scrape_configs:
+  # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+  - job_name: "prometheus"
+
+    # metrics_path defaults to '/metrics'
+    # scheme defaults to 'http'.
+
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "node"
+    static_configs:
+      - targets: ["172.16.20.58:9100"]
+      - targets: ["172.16.20.181:9100"]
+      - targets: ["172.16.20.151:9100"]
+
+  - job_name: "postgres"
+    static_configs:
+      - targets: ["172.16.20.181:9187"]
+
+
+Рестартаем сервис
+
+После этого переходим в UI прометеуса host:9090 и переходим в targets и смотрим состояние 
+
+
+Все должно работать
+Весь траблшутинг заключается в просмотре статуса сервиса, netstat -tnlp. 
+
+

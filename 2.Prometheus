@@ -1,0 +1,40 @@
+Установка prometheus 
+
+1.Выбираем свежую версию https://github.com/prometheus/prometheus/releases, вгетаем 
+2.Распакуем tar -xvf 
+3.Так как это не какой нибудь удобный деб пакет, то нужно ручками раскидать файлы по директориям, создать пользователя и добавить initd юнит
+# cd prometheus-*
+# cp prometheus promtool /usr/local/bin  --закидываем бинарники в /usr/local/bin
+# mkdir /etc/prometheus /var/lib/prometheus --создаем директории под прометей
+# cp prometheus.yml /etc/prometheus --перекидываем конфиг файл в созданную /etc/prometheus/
+# useradd --no-create-home --home-dir / --shell /bin/false prometheus --создаем пользователя 
+# chown -R prometheus:prometheus /var/lib/prometheus отдаем права ему 
+
+5.Создаем initd юнит в котором мы можем указать нужные нам параметры запуска сервиса и обязательно прописываем путь к конфигу
+/etc/systemd/system/prometheus.service - создаем этот файл и в него прописываем 
+
+[Unit]
+Description=Prometheus
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=prometheus
+Group=prometheus
+Restart=on-failure
+ExecStart=/usr/local/bin/prometheus \
+  --config.file /etc/prometheus/prometheus.yml \
+  --storage.tsdb.path /var/lib/prometheus/
+ExecReload=/bin/kill -HUP $MAINPID
+ProtectHome=true
+ProtectSystem=full
+
+[Install]
+WantedBy=default.target
+
+6.После этого мы уже можем пользоваться нашим сервисом
+systemctl daemon reload
+systemctl status prometheus
+systemctl start prometheus 
+systemctl enable prometheus 
+7.После этого прометеус должен встать, проверим его веб интерфейс http://host:9090

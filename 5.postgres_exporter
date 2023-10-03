@@ -1,0 +1,31 @@
+postgres_exporter
+
+1.Вгетаем https://github.com/prometheus-community/postgres_exporter/releases/
+2.Распаковываем 
+3.Скопируйте содержимое распакованного архива в папку /usr/local/bin
+5.Измените владельца postgres_exporter на postgres:
+chown -R postgres:postgres /usr/local/bin/postgres_exporter
+6.Создайте сценарий запуска systemd сервиса postgres_exporter. 
+Для этого создайте файл /etc/systemd/system/postgres_exporter.service со следующим содержимым:
+
+[Unit]
+Description=Prometheus PostgreSQL Exporter
+After=network.target
+
+[Service]
+Type=simple
+Restart=always
+User=postgres
+Group=postgres
+Environment=DATA_SOURCE_NAME="user=postgres host=/var/run/postgresql/ sslmode=disable"
+ExecStart=/usr/local/bin/postgres_exporter
+[Install]
+WantedBy=multi-user.target
+
+
+systemctl daemon-reload
+systemctl start postgres_exporter.service
+systemctl enable postgres_exporter.service
+
+
+https://mcs.mail.ru/docs/additionals/cases/cases-monitoring/case-psql-exporter

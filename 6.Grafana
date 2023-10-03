@@ -1,0 +1,5 @@
+Тут все просто  
+1.Вгетаем deb пакет 
+2.dpkg -i grafana_6.3.2_amd64.deb
+3.systemctl status grafana
+4.systemctl start grafana 
